@@ -1,0 +1,8 @@
+/expastore-backend/
+/expastore-frontend/
+/.pnpm-store/
+/.claude/
+/.agents/
+/expastore_db
+*.dump
+*.backup
