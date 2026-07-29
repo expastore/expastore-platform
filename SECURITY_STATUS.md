@@ -42,6 +42,22 @@ Este documento resume los hallazgos de seguridad resueltos recientemente y las v
 - Validado con invariantes de idempotencia, un test HTTP de tres guardados consecutivos, un script contra la base de datos real de desarrollo (tres ciclos de guardado + lectura directa a `blog_posts`), y una prueba manual en el navegador (sesión admin real, tres guardados vía UI) confirmando que texto con `&`/`"`/`24/7` y contenido `<strong>` se preservan sin degradación.
 - Referencia backend: commit `aa63830`.
 
+### Atributos HTML con espacios y "/" innecesariamente escapado en sanitizeHtml
+
+- Fecha: 2026-07-28.
+- El regex de atributos de `sanitizeHtml` (backend) vaciaba valores con espacios internos (`alt="imagen de prueba"` quedaba en `alt=""`, cortado en el primer espacio) porque compartía una sola clase de caracteres sin espacios para atributos con y sin comillas. Además `escapeHtml` se aplicaba a TODOS los atributos permitidos, incluidos `href`/`src`, escapando `/` a `&#47;` sin necesidad: dentro de un valor ya entre comillas dobles, `/` no rompe nada y no aporta protección contra XSS.
+- Fix: el regex captura el valor completo según el tipo de comilla (doble, simple, sin comillas). `href`/`src` ya no pasan por `escapeHtml` completo: solo se neutralizan `&` y `"` (necesarios para no romper el atributo), preservando `/`. El resto de atributos sigue usando `escapeHtml` sin cambios.
+- Validado con tests nuevos (espacios en comillas dobles/simples, múltiples `/` en href/src, `&`/`"` siguen neutralizados) y con un guardado real contra `sitePage.service.ts` releído desde la base de datos de desarrollo.
+- Referencia backend: commit `72e8a5c`.
+
+### DOMPurify ignoraba allowlists por nivel (USE_PROFILES)
+
+- Fecha: 2026-07-28.
+- `USE_PROFILES` en `useSanitizedHTML.ts` sobrescribía silenciosamente `ALLOWED_TAGS`/`ALLOWED_ATTR` de cualquier nivel (`RICH_TEXT`, `BASIC_HTML`, `stripAllHTML`/`SafeText`), usando el perfil completo `"html"` en su lugar. `FORBID_TAGS`/`FORBID_ATTR` nunca estuvieron comprometidos (`script`, `iframe`, `onerror` seguían bloqueados), pero las allowlists positivas eran decorativas — afectaba contenido público (blog, páginas CMS, reseñas de clientes).
+- Fix: `USE_PROFILES` se desactiva cuando la llamada trae su propio `ALLOWED_TAGS`/`ALLOWED_ATTR` explícito; `SafeAdminHTML` (`FULL_HTML`, sin allowlist propia) no cambia de comportamiento.
+- Validado en el navegador contra el código real (no solo instrumentación temporal): los casos que antes sobrevivían indebidamente bajo `BASIC_HTML` (`img`, `table`, `div` con `class`, atributos `class`/`title` fuera de la allowlist) ahora se eliminan; el caso `SafeText` (el más severo, pensado para no permitir ningún HTML) ahora sí elimina todo el HTML; contenido legítimo (negrita, cursiva, enlaces, encabezados, listas) se sigue mostrando igual en consumidores reales (BlogPostPage, editor de páginas CMS, reseñas).
+- Referencia frontend: commit `2a2e167`.
+
 ### TLS estricto de PostgreSQL en producción
 
 - Fecha: 2026-07-13.
@@ -70,13 +86,6 @@ El patrón de “middleware global reescribe texto, luego el servicio de dominio
 blog-posts recibió el rediseño completo el 2026-07-28 (ver “Resuelto” arriba, commit `aa63830`) y sale de esta lista.
 
 La idempotencia global de `sanitizeString` (`564a4a8`) actúa como red de seguridad para todos los módulos restantes: detiene el crecimiento de entidades si se guarda repetidamente. Sin embargo, ninguno recibió todavía el rediseño completo —separación de normalización de almacenamiento y escape de salida— aplicado a settings/pages y blog-posts. Queda pendiente revisar módulo por módulo, priorizando por riesgo de negocio.
-
-### Restricción de tags por nivel de sanitización no efectiva en el frontend (DOMPurify)
-
-- Detectado: 2026-07-28, durante la verificación de la Tarea 5 de esta sesión (cambio de `SafeAdminHTML` a `SafeRichHTML` en `ContentPageBody.tsx`, `PageSectionRenderer.tsx`, `BlogPostPage.tsx`).
-- `DEFAULT_OPTIONS.USE_PROFILES` en `expastore-frontend/src/shared/lib/useSanitizedHTML.ts` hace que DOMPurify descarte el `ALLOWED_TAGS`/`ALLOWED_ATTR` explícito de cualquier `sanitizeLevel` (`RICH_TEXT`, `BASIC_HTML`, etc.) y aplique en su lugar el perfil completo `"html"` (que sí incluye `img`, `video`, `audio`, etc.), quedando acotado solo por `FORBID_TAGS`/`FORBID_ATTR`. Confirmado instrumentando `useSanitizedHTML`/`SafeHTML` en el navegador: con `ALLOWED_TAGS` sin `img` en la config resuelta, el HTML sanitizado final conserva el `<img>` de todas formas.
-- Impacto práctico hoy es bajo porque todo el contenido que pasa por `SafeRichHTML`/`SafeBasicHTML` es autorado por administradores autenticados (CMS, blog, popups), no por usuarios finales. Pero la restricción de tags de estos niveles es, en la práctica, teatro de seguridad: no reduce la superficie de ataque frente a un admin comprometido o datos corruptos más allá de lo que ya bloquea `FORBID_TAGS`.
-- No corregido en esta sesión (excede el alcance de la tarea que lo encontró y requiere revisar el comportamiento esperado de cada nivel antes de tocarlo). Pendiente de decisión: lo más probable es eliminar `USE_PROFILES` de `DEFAULT_OPTIONS` y depender solo de `ALLOWED_TAGS`/`ALLOWED_ATTR` explícitos.
 
 ### Integración SMTP real
 
