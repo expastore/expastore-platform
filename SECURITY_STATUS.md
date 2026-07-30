@@ -90,3 +90,11 @@ La idempotencia global de `sanitizeString` (`564a4a8`) actúa como red de seguri
 ### Integración SMTP real
 
 La integración usa `nodemailer` v9 en runtime mientras `@types/nodemailer` permanece en v6 y el paquete se carga con `require()`. Falta validar STARTTLS y autenticación contra un relay SMTP real antes de considerar cerrada esta verificación.
+
+### Desfase entre migraciones aplicadas y estado real de schema
+
+- Fecha: 2026-07-30.
+- `npx sequelize-cli db:migrate:status` reporta la mayoría de migraciones como no aplicadas, mientras el servidor real corre `src/` vía `ts-node` contra `dist/` desactualizado.
+- Riesgo: cualquier intento futuro de correr `sequelize-cli db:migrate` podría reintentar migraciones de schema ya aplicadas de facto, potencialmente rompiendo el schema real.
+- No investigado a fondo ni corregido — descubierto incidentalmente al aplicar la corrección de datos del bug de payment-methods `type` (`554656b`), que se aplicó directamente contra la conexión real en vez de vía CLI para evitar este riesgo.
+- Requiere investigación dedicada: confirmar si `dist/` debe reconstruirse, si la tabla `SequelizeMeta` está desincronizada del estado real, o si el proyecto simplemente no usa `sequelize-cli` como mecanismo real de despliegue de schema (y en ese caso, documentar cuál es el mecanismo real).
